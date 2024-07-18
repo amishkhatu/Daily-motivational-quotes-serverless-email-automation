@@ -1,0 +1,133 @@
+org: amishorg
+app: hello-world-python
+service: quotes-projects
+
+# plugins:
+#   - serverless-python-requirements
+
+custom:
+  wsgi:
+    app: app.app
+  tableName: 'users-table-${sls:stage}-${self:provider.region}'
+  region: ${self:provider.region}
+
+provider:
+  name: aws
+  runtime: python3.12
+  region: us-east-1
+  profile: serverless-admin
+  stage: dev
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action: SNS:Publish
+          Resource: "*"  # Assuming you want to allow SNS publish to any resource. Update if specific resource needed.
+
+        - Effect: Allow
+          Action: "s3:*"
+          Resource: "*"  # Assuming you want to allow S3 access to any resource. Update if specific resource needed.
+
+        - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+          Resource:
+            - Fn::GetAtt: [UsersTable, Arn]  # Reference the UsersTable ARN correctly.
+
+  environment:
+    SENDGRID_API_KEY: "SG.your-key-wjC8SzGAs"
+    USERS_TABLE: ${self:custom.tableName}
+    REGION: ${self:provider.region}
+    SNS_TOPIC_ARN: arn:aws:sns:us-east-1:you-key:quotes-messages-dev
+
+functions:
+  api:
+    handler: handler/getQuotes.get_quotes
+    events:
+      - http:
+          path: quotes
+          method: get
+          cors: true
+
+  subscribeUser:
+    handler: handler/subscribeUser.subscribe_user
+    events:
+      - http:
+          path: subscribe
+          method: post
+          cors: true
+
+  getSubscribers:
+    handler: handler/getSubscribers.get_subscribers
+    events:
+      - http:
+          path: subscribers
+          method: get
+          cors: true
+
+      
+
+  staticMailer:
+    handler: handler/staticMailer.static_mailer
+    layers:
+      - arn:aws:lambda:us-east-1:770693421928:layer:Klayers-p312-requests:6
+    events:
+      - http:
+          path: mailer
+          method: post
+          cors: true
+
+  sendEmail:
+    handler: handler/sendEmail.send_email
+    layers:
+      - arn:aws:lambda:us-east-1:your-key:layer:sendgrid-layer:2
+    events:
+      - http:
+          path: sendEmail
+          method: post 
+          cors: true
+    #       Fire at 1 PM every day UTC (9 am EST) - cron examples: https://docs.oracle.com/cd/E12058_01/doc/doc.1014/e12030/cron_expressions.htm
+    #  https://docs.aws.amazon.com/AmazonCloudWatch/latest/events/ScheduledEvents.html
+      - schedule: cron(17 19 * * ? *)
+          # rate: cron(30 18 * * ? *)
+
+
+resources:
+  Resources:
+
+  #SNS
+    QuotesMessages:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: quotes-messages-${self:provider.stage} #quotes-messages-dev # python-quotes-messages-${self:provider.stage}
+    QuotesMessagesSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref QuotesMessages
+        Protocol: email
+        Endpoint: rakesh.kumar@gmail.com
+        DeliveryPolicy: 
+          healthyRetryPolicy:
+            numRetries: 20
+            minDelayTarget: 30
+            maxDelayTarget: 600
+            backoffFunction: exponential
+
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
